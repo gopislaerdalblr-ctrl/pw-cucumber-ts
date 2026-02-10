@@ -8,7 +8,11 @@
 } from "@cucumber/cucumber";
 import fs from "node:fs";
 import path from "node:path";
-import { loadInstance, loadSecrets, loadCourseConfig } from "../config/runtime";
+import {
+  loadInstance,
+  loadCourseConfig,
+  loadSecretsForInstance,
+} from "../config/runtime";
 import { launchPlaywright } from "./playwright-manager";
 import { World } from "./world";
 
@@ -88,13 +92,19 @@ function tryCopyFile(src: string, dest: string) {
     ensureDir(path.dirname(dest));
     fs.copyFileSync(src, dest);
   } catch {
-    // ignore copy failures
+    // ignore
   }
 }
 
+// normalize INSTANCE input once, same everywhere
+function getInstanceKey(): string {
+  return String(process.env.INSTANCE || "maurya")
+    .trim()
+    .toLowerCase();
+}
+
 /**
- * ✅ NEW (requested): Capture screenshot at the exact failed step moment
- * - We also store last step text for better screenshot naming.
+ * ✅ Capture screenshot at the exact failed step moment
  */
 BeforeStep(function (this: World, { pickleStep }) {
   (this as any).lastStepText = pickleStep?.text || "";
@@ -112,17 +122,17 @@ AfterStep(async function (this: World, { result }) {
     const safeScenario = safeFilePart(scenarioName);
     const safeStep = safeFilePart((this as any).lastStepText || "failed_step");
 
-    const fileName = `${new Date().toISOString().replace(/[:.]/g, "-")}_${safeScenario}__${safeStep}.png`;
+    const fileName = `${new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")}_${safeScenario}__${safeStep}.png`;
     const fullPath = path.join(tmpShotsDir, fileName);
 
     const buf = await this.page.screenshot({ path: fullPath, fullPage: true });
     await this.attach(buf, "image/png");
     await this.attach(`URL: ${this.page.url()}`, "text/plain");
 
-    // mark so After() doesn't re-capture (avoids blank duplicate)
     (this as any)._failedStepScreenshotCaptured = true;
   } catch (e) {
-    // never fail scenario because screenshot failed
     await this.attach(
       `Failed to capture AfterStep screenshot: ${(e as Error).message}`,
       "text/plain",
@@ -131,13 +141,20 @@ AfterStep(async function (this: World, { result }) {
 });
 
 Before(async function (this: World, scenario) {
-  // store scenario pickle for AfterStep naming
   (this as any).pickle = scenario.pickle;
   (this as any)._failedStepScreenshotCaptured = false;
 
-  const instanceName = (process.env.INSTANCE || "maurya").toLowerCase();
-  this.instance = loadInstance(instanceName);
-  const secrets = loadSecrets(this.instance.env);
+  // ✅ SINGLE source of truth for instance
+  const instanceKey = getInstanceKey();
+
+  // ✅ Load instance config once
+  const cfg = loadInstance(instanceKey);
+  this.instance = cfg;
+
+  // ✅ Load secrets based on instance (qa-samurai.json / qaSamurai.json etc)
+  // NOTE: some projects type these params narrowly; cast only at the boundary to avoid TS EnvName complaints.
+  const secrets = loadSecretsForInstance(instanceKey as any, cfg.env as any);
+
   const course = loadCourseConfig();
 
   this.adminEmail = secrets.adminEmail;
@@ -148,22 +165,21 @@ Before(async function (this: World, scenario) {
   this.context = pw.context;
   this.page = pw.page;
 
-  // ✅ Console logs (buffer)
+  // Console logs
   this.consoleLogs = [];
   this.page.on("console", (msg) => {
     this.consoleLogs.push(`[console] ${msg.type()} ${msg.text()}`);
   });
 
-  // ✅ Page errors (buffer)
+  // Page errors
   (this as any).pageErrors = [];
   this.page.on("pageerror", (err) => {
     (this as any).pageErrors.push(`[pageerror] ${err?.message || String(err)}`);
   });
 
-  // ✅ Network trace buffers
+  // Network logs
   (this as any).netLogs = [] as NetEntry[];
   (this as any).reqStart = new Map<string, number>();
-
   const nowIso = () => new Date().toISOString();
 
   this.page.on("request", (req) => {
@@ -208,9 +224,9 @@ Before(async function (this: World, scenario) {
     });
   });
 
-  // Persist run metadata (single place used by report generator)
+  // Persist run metadata
   safeWriteRunMeta({
-    instance: instanceName,
+    instance: instanceKey,
     env: this.instance.env,
     baseUrl: this.instance.baseUrl,
     subdomain: this.instance.subdomain,
@@ -227,15 +243,11 @@ Before(async function (this: World, scenario) {
 After(async function (this: World, scenario) {
   const scenarioName = scenario.pickle.name;
 
-  // Video handle early
+  // ✅ Guard: if Before failed, page/context/browser may be undefined
   const video = this.page?.video ? this.page.video() : null;
 
-  /**
-   * Existing behavior kept, but:
-   * ✅ If AfterStep already captured failure screenshot, we skip re-capturing here
-   * (avoids blank page screenshot)
-   */
-  if (scenario.result?.status === Status.FAILED) {
+  // Screenshot on failure (only if page exists)
+  if (scenario.result?.status === Status.FAILED && this.page) {
     const alreadyCaptured = Boolean(
       (this as any)._failedStepScreenshotCaptured,
     );
@@ -245,25 +257,24 @@ After(async function (this: World, scenario) {
       ensureDir(tmpShotsDir);
 
       const safeName = safeFilePart(scenarioName);
-      const fileName = `${new Date().toISOString().replace(/[:.]/g, "-")}_${safeName}.png`;
+      const fileName = `${new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")}_${safeName}.png`;
       const fullPath = path.join(tmpShotsDir, fileName);
 
       await this.page.screenshot({ path: fullPath, fullPage: true });
-
       const buf = fs.readFileSync(fullPath);
       await this.attach(buf, "image/png");
-
       await this.attach(`URL: ${this.page.url()}`, "text/plain");
     }
   }
 
-  // ✅ NEW: Write logs to files (do NOT embed big text in HTML report)
+  // Write logs (safe even if page was never created)
   const meta = readRunMeta();
   const runName = meta?.generatedAt
     ? formatRunNameFromIso(meta.generatedAt)
     : formatRunNameFromIso(new Date().toISOString());
 
-  // We always store into _tmp (guaranteed to exist)
   const tmpLogsDir = path.resolve("reports/_tmp/logs");
   ensureDir(tmpLogsDir);
 
@@ -275,20 +286,17 @@ After(async function (this: World, scenario) {
   const netFileTmp = path.join(tmpLogsDir, `${baseFile}__network.log`);
   const netJsonFileTmp = path.join(tmpLogsDir, `${baseFile}__network.json`);
 
-  // Console
   const consoleText = this.consoleLogs?.length
     ? this.consoleLogs.join("\n")
     : "No console logs captured.";
   writeTextFile(consoleFileTmp, consoleText);
 
-  // Page errors
   const pageErrors: string[] = (this as any).pageErrors || [];
   const pageErrorsText = pageErrors.length
     ? pageErrors.join("\n")
     : "No page errors captured.";
   writeTextFile(pageErrFileTmp, pageErrorsText);
 
-  // Network
   const netLogs: NetEntry[] = (this as any).netLogs || [];
   let netText = "No network logs captured.";
   if (netLogs.length) {
@@ -301,13 +309,17 @@ After(async function (this: World, scenario) {
         );
       } else if (e.type === "response") {
         lines.push(
-          `[${e.ts}] [RES] ${e.method} ${e.url} -> ${e.status} ${e.statusText || ""} (${e.resourceType || ""}) ${
+          `[${e.ts}] [RES] ${e.method} ${e.url} -> ${e.status} ${
+            e.statusText || ""
+          } (${e.resourceType || ""}) ${
             typeof e.timingMs === "number" ? `(${e.timingMs}ms)` : ""
           }`,
         );
       } else {
         lines.push(
-          `[${e.ts}] [FAIL] ${e.method} ${e.url} (${e.resourceType || ""}) :: ${e.errorText || ""}`,
+          `[${e.ts}] [FAIL] ${e.method} ${e.url} (${e.resourceType || ""}) :: ${
+            e.errorText || ""
+          }`,
         );
       }
     }
@@ -317,8 +329,6 @@ After(async function (this: World, scenario) {
   writeTextFile(netFileTmp, netText);
   writeTextFile(netJsonFileTmp, JSON.stringify(netLogs, null, 2));
 
-  // If history run folder already exists (sometimes it will), also copy there.
-  // If it doesn't exist yet, generate-report will still include _tmp/logs (zip share).
   const historyRunDir = path.resolve("reports/_history", runName);
   const artifactsDir = path.join(historyRunDir, "artifacts");
 
@@ -338,7 +348,6 @@ After(async function (this: World, scenario) {
     );
   }
 
-  // ✅ Attach ONLY a small summary (keeps HTML small)
   const summary: string[] = [];
   summary.push("✅ Logs saved as files (not embedded) to keep report small:");
   summary.push(`Run: ${runName}`);
@@ -366,21 +375,18 @@ After(async function (this: World, scenario) {
   }
   await this.attach(summary.join("\n"), "text/plain");
 
-  // ✅ Keep your 3s wait so video doesn't cut immediately
+  // wait a bit so video isn't cut
   await this.page?.waitForTimeout(3000).catch(() => {});
 
-  // Close to finalize video file
+  // close safely
   await this.page?.close().catch(() => {});
   await this.context?.close().catch(() => {});
   await this.browser?.close().catch(() => {});
 
-  // Rename + attach video (existing behavior kept)
+  // attach video (only if available)
   if (video) {
     try {
       const originalPath = await video.path();
-
-      // If navigate() isn't available in your Playwright version, fallback to path()
-      // (this keeps compatibility without breaking)
       const finalOriginalPath =
         typeof originalPath === "string" ? originalPath : await video.path();
 
