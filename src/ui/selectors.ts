@@ -54,7 +54,11 @@
         "a.action_dropdown",
         'a[data-toggle="dropdown"]',
       ],
-      orgDetailsAction: ['a:has-text("Organization Details")'],
+      orgDetailsAction: [
+        'a:has-text("Organization Details")',
+        'a:has-text("Organisation Details")',
+        'a[href*="manage_organization"]',
+      ],
     },
     orgProducts: {
       orgProducts: ['a:has-text("Products")', 'a[href*="manage_product"]'],
