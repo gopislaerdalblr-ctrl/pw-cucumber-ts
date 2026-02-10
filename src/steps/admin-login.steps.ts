@@ -151,9 +151,9 @@ Then("Navigate to Organization details page", async function (this: World) {
 
   await this.page.waitForLoadState("networkidle");
 
-  await expect(this.page.locator('text="Organization Details"')).toBeVisible({
-    timeout: 20000,
-  });
+  await expect(
+    this.page.getByRole("link", { name: /Organi[sz]ation Details/ }),
+  ).toBeVisible({ timeout: 20000 });
 
   await clickIfPresent(this, S.adminLogin.orgListingActions.orgDetailsAction);
 
