@@ -1,4 +1,4 @@
 ﻿node_modules
 dist
 reports
-src/data/secrets/*.json
+# src/data/secrets/*.json

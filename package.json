@@ -3,9 +3,16 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "engines": {
+    "node": ">=20 <25",
+    "npm": ">=10"
+  },
   "scripts": {
     "test": "ts-node src/runner.ts",
-    "report": "ts-node src/report/generate-report.ts && ts-node src/report/rotate-reports.ts"
+    "report": "ts-node src/report/generate-report.ts && ts-node src/report/rotate-reports.ts",
+    "setup": "npm install && npx playwright install",
+    "setup:clean": "npm ci && npx playwright install --with-deps",
+    "check:env": "node -v && npm -v && npx playwright --version"
   },
   "keywords": [],
   "author": "",
