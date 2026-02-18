@@ -119,5 +119,33 @@
         'button:has-text("Search")',
       ],
     },
+
+    AccessOrganization: [
+      'a[user-type="LMS"]',
+      'a:has-text("Access Organization")',
+      'a[href*="elearning_login"]',
+    ],
+
+    SupportActionDropdown: [
+      'a.dropdown-toggle:has-text("Reports")',
+      'a[data-toggle="dropdown"]:has-text("Reports")',
+      'a:has-text("Reports")',
+    ],
+    MergeAccountOption: [
+      'a:has-text("Progress Report")',
+      'a[href*="progress_report"]',
+      'a[href="/manage/progress_report"]',
+    ],
+    profileDropdown: [
+      "a.pro_pic.pii-user-info",
+      'a[data-toggle="dropdown"].pro_pic',
+      'a.pro_pic:has-text("GS")',
+    ],
+    logoutLink: [
+      'a[href*="elearning_signout"]', // strongest
+      'a[href*="signout"]', // fallback
+      'a:has-text("Logout - Org2000209")', // fallback
+      'a:has-text("Logout")', // last resort
+    ],
   },
 } as const;
