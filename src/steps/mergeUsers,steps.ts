@@ -78,6 +78,186 @@ export async function clickIfPresent(
   return false;
 }
 
+/**
+ * ✅ FINAL FIX (NO MISCLICK POSSIBLE):
+ * - Open dropdown (already done in step)
+ * - Find the Logout href using your selectors (NOT by clicking)
+ * - Navigate to href directly (page.goto)
+ */
+async function navigateToLogoutFromDropdown(world: any): Promise<void> {
+  const page = world.page;
+
+  // Give the dropdown a moment to render items
+  await page.waitForTimeout(300);
+
+  // Find the first visible element that REALLY points to signout
+  for (const sel of S.adminLogin.logoutLink) {
+    const loc = page.locator(sel);
+
+    let count = 0;
+    try {
+      count = await loc.count();
+    } catch {
+      count = 0;
+    }
+    if (!count) continue;
+
+    for (let i = 0; i < count; i++) {
+      const el = loc.nth(i);
+
+      try {
+        await el.waitFor({ state: "visible", timeout: 2000 });
+
+        const href = (
+          (await el.getAttribute("href").catch(() => "")) || ""
+        ).trim();
+        const text = (
+          ((await el.textContent().catch(() => "")) || "") as string
+        ).trim();
+
+        // HARD FILTER: must be logout-ish text AND must be signout-ish href
+        const isLogoutText =
+          /^logout\b/i.test(text) &&
+          !/switch\s*org|switch\s*organization/i.test(text);
+        const isLogoutHref =
+          href.includes("elearning_signout") ||
+          href.toLowerCase().includes("signout");
+
+        if (!isLogoutText || !isLogoutHref) continue;
+
+        // Make href absolute if needed
+        const targetUrl = new URL(href, page.url()).toString();
+
+        if (typeof world.attach === "function") {
+          try {
+            await world.attach(
+              `Resolved Logout URL (no-click mode)\nSelector: ${sel}\nIndex: ${i}\nText: ${text}\nHref: ${href}\nTarget URL: ${targetUrl}`,
+              "text/plain",
+            );
+          } catch {
+            // ignore
+          }
+        }
+
+        // ✅ Navigate directly — cannot click Switch Org by mistake
+        await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+
+        // Optional extra settle
+        await page.waitForLoadState("networkidle").catch(() => {});
+
+        return;
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  throw new Error(
+    `Logout failed: Could not resolve a Logout link from selectors.\nSelectors:\n- ${S.adminLogin.logoutLink.join(
+      "\n- ",
+    )}`,
+  );
+}
+
+async function hardLogout(world: any): Promise<void> {
+  const page = world.page;
+
+  // small safe attach helper (never throws)
+  const safeAttach = async (msg: string) => {
+    try {
+      if (world && typeof world.attach === "function") {
+        await world.attach(msg, "text/plain");
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // 1) Open profile dropdown
+  await clickIfPresent(world, S.adminLogin.profileDropdown);
+  await page.waitForTimeout(300);
+
+  // 2) Resolve logout href from your selector array
+  let targetUrl: string | null = null;
+  let resolvedMeta = "";
+
+  for (const sel of S.adminLogin.logoutLink) {
+    const loc = page.locator(sel);
+    const count = await loc.count().catch(() => 0);
+    if (!count) continue;
+
+    for (let i = 0; i < count; i++) {
+      const el = loc.nth(i);
+      const visible = await el.isVisible().catch(() => false);
+      if (!visible) continue;
+
+      const href = (
+        (await el.getAttribute("href").catch(() => "")) || ""
+      ).trim();
+      const text = ((await el.textContent().catch(() => "")) || "").trim();
+
+      const isLogoutText = /^logout\b/i.test(text);
+      const isLogoutHref =
+        href.includes("elearning_signout") ||
+        href.toLowerCase().includes("signout");
+
+      if (isLogoutText && isLogoutHref) {
+        targetUrl = new URL(href, page.url()).toString();
+        resolvedMeta = `Resolved Logout URL\nSelector: ${sel}\nIndex: ${i}\nText: ${text}\nHref: ${href}\nTarget URL: ${targetUrl}`;
+        break;
+      }
+    }
+    if (targetUrl) break;
+  }
+
+  if (!targetUrl) {
+    throw new Error(
+      `Hard logout failed: could not resolve logout URL from selectors:\n- ${S.adminLogin.logoutLink.join("\n- ")}`,
+    );
+  }
+
+  await safeAttach(resolvedMeta);
+
+  // 3) Hit the signout endpoint
+  await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await safeAttach(`URL after hitting signout: ${page.url()}`);
+
+  // 4) HARD KILL SESSION: clear cookies + storage
+  await page.context().clearCookies();
+
+  // clear storage for current origin
+  await page
+    .evaluate(() => {
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+      } catch {}
+    })
+    .catch(() => {});
+
+  // 5) Force a reload of the site root (or login page if your app has one)
+  const baseUrl = new URL("/", page.url()).toString();
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.waitForTimeout(800);
+
+  // 6) Verify logged out (profile dropdown should NOT be visible)
+  const dropdownVisible = await page
+    .locator(S.adminLogin.profileDropdown[0])
+    .isVisible()
+    .catch(() => false);
+
+  await safeAttach(
+    `After hard logout check\nBase URL: ${baseUrl}\nCurrent URL: ${page.url()}\nProfile dropdown visible: ${dropdownVisible}`,
+  );
+
+  if (dropdownVisible) {
+    throw new Error(
+      `Hard logout attempted but session still active. Current URL: ${page.url()}`,
+    );
+  }
+}
+
 Then("Navigate to Access Organization page", async function (this: World) {
   await this.page.waitForTimeout(2000);
 
@@ -238,10 +418,7 @@ Then(
 );
 
 Then("Logout from the application", async function (this: World) {
-  await clickIfPresent(this, S.adminLogin.profileDropdown);
-  await this.page.waitForTimeout(2000);
-
-  await clickIfPresent(this, S.adminLogin.logoutLink, { strictClick: true });
+  await hardLogout(this);
 
   console.log("Current URL:", this.page.url());
   await this.attach(`After logout URL: ${this.page.url()}`, "text/plain");

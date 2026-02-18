@@ -142,6 +142,8 @@
       'a.pro_pic:has-text("GS")',
     ],
     logoutLink: [
+      'a[text()="Logout - Org2000209"]',
+      'a[contains(text("Logout")]',
       'a[href*="elearning_signout"]', // strongest
       'a[href*="signout"]', // fallback
       'a:has-text("Logout - Org2000209")', // fallback
