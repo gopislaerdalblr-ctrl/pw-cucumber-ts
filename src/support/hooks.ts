@@ -8,6 +8,7 @@
 } from "@cucumber/cucumber";
 import fs from "node:fs";
 import path from "node:path";
+import type { ConsoleMessage, Request, Response } from "playwright";
 import {
   loadInstance,
   loadCourseConfig,
@@ -167,13 +168,13 @@ Before(async function (this: World, scenario) {
 
   // Console logs
   this.consoleLogs = [];
-  this.page.on("console", (msg) => {
+  this.page.on("console", (msg: ConsoleMessage) => {
     this.consoleLogs.push(`[console] ${msg.type()} ${msg.text()}`);
   });
 
   // Page errors
   (this as any).pageErrors = [];
-  this.page.on("pageerror", (err) => {
+  this.page.on("pageerror", (err: Error) => {
     (this as any).pageErrors.push(`[pageerror] ${err?.message || String(err)}`);
   });
 
@@ -182,7 +183,7 @@ Before(async function (this: World, scenario) {
   (this as any).reqStart = new Map<string, number>();
   const nowIso = () => new Date().toISOString();
 
-  this.page.on("request", (req) => {
+  this.page.on("request", (req: Request) => {
     const id = req.url() + "::" + req.method() + "::" + req.resourceType();
     (this as any).reqStart.set(id, Date.now());
 
@@ -195,7 +196,7 @@ Before(async function (this: World, scenario) {
     });
   });
 
-  this.page.on("response", async (res) => {
+  this.page.on("response", async (res: Response) => {
     const req = res.request();
     const id = req.url() + "::" + req.method() + "::" + req.resourceType();
     const start = (this as any).reqStart.get(id);
@@ -213,7 +214,7 @@ Before(async function (this: World, scenario) {
     });
   });
 
-  this.page.on("requestfailed", (req) => {
+  this.page.on("requestfailed", (req: Request) => {
     (this as any).netLogs.push({
       type: "failed",
       ts: nowIso(),
@@ -374,6 +375,21 @@ After(async function (this: World, scenario) {
     );
   }
   await this.attach(summary.join("\n"), "text/plain");
+
+  // ✅ Healwright attachments should NOT depend on video existing
+  if (this.heal?.enabled) {
+    await this.attach(`Healwright enabled: ${this.heal.enabled}`, "text/plain");
+  }
+  if (this.heal?.used) {
+    const msg =
+      `Failed scenario had a selector/locator issue, it was healed with Healwright, ` +
+      `the scenario was retried once (if retry enabled), and then it passed (or continued).`;
+    await this.attach(msg, "text/plain");
+
+    if (Array.isArray(this.heal.messages) && this.heal.messages.length) {
+      await this.attach(this.heal.messages.join("\n"), "text/plain");
+    }
+  }
 
   // wait a bit so video isn't cut
   await this.page?.waitForTimeout(3000).catch(() => {});

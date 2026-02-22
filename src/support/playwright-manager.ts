@@ -8,11 +8,12 @@ import {
   BrowserContext,
   Page,
 } from "playwright";
+import { isHealEnabled, wrapWithHealwright } from "./healwright";
 
 export type PWContext = {
   browser: Browser;
   context: BrowserContext;
-  page: Page;
+  page: Page & any;
 };
 
 function ensureDir(p: string) {
@@ -47,10 +48,12 @@ export async function launchPlaywright(): Promise<PWContext> {
     },
   });
 
-  const page = await context.newPage();
+  const rawPage = await context.newPage();
+  rawPage.setDefaultTimeout(60_000);
+  rawPage.setDefaultNavigationTimeout(60_000);
 
-  page.setDefaultTimeout(60_000);
-  page.setDefaultNavigationTimeout(60_000);
+  // ✅ Healwright wrap (optional via env SELF_HEAL=1)
+  const page = isHealEnabled() ? wrapWithHealwright(rawPage) : (rawPage as any);
 
   return { browser, context, page };
 }

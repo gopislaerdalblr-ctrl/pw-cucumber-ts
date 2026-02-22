@@ -1,4 +1,11 @@
 ﻿node_modules
 dist
 reports
+
 # src/data/secrets/*.json
+
+# secrets (keep commented if you want to commit sample secrets)
+# src/data/secrets/*.json
+
+# healwright cache
+.self-heal/

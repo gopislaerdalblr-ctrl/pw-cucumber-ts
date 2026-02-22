@@ -15,3 +15,19 @@ Feature: Merge User Actions UI Validation.
     Then Merge user page should load successfully
    # Then Validate the UI elements on Merge user page
     Then Logout from the application
+
+    @merge
+    Scenario: Ablity to select account one with user id
+    Given Launch the application
+    Then Login with admin credentials
+    Then Admin should be logged in successfully
+    Then Select Super admin role
+    Then Navigate to Admin Dashboard
+    Then Navigate to Organizations listing page
+    Then Admin search org by id "orgId"
+    Then Navigate to Organization details page
+    Then Navigate to manage students page
+    Then Import 10 students from file "students.csv"
+    Then Navigate to products page
+    Then Check if course is available or add the course as "courseId" and "courseId1"
+    

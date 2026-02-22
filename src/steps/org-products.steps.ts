@@ -563,7 +563,7 @@ Then(
         `❌ Download template link not found.\nURL: ${this.page.url()}\n\nLinks on page:\n` +
           links
             .filter(Boolean)
-            .map((t) => `- ${t}`)
+            .map((t: string) => `- ${t}`)
             .join("\n"),
         "text/plain",
       );
@@ -654,7 +654,7 @@ Then(
       .first();
 
     const isHidden = await fileInput
-      .evaluate((el) => (el as HTMLInputElement).offsetParent === null)
+      .evaluate((el: Element) => (el as HTMLInputElement).offsetParent === null)
       .catch(() => true);
 
     if (isHidden) {
@@ -705,7 +705,7 @@ Then(
         `❌ Upload button not found.\nURL: ${this.page.url()}\n\nClickable texts found:\n` +
           btnTexts
             .filter(Boolean)
-            .map((t) => `- ${t.trim()}`)
+            .map((t: string) => `- ${t.trim()}`)
             .join("\n"),
         "text/plain",
       );
@@ -869,7 +869,7 @@ Then(
       if (!exists) return false;
 
       const disabled = await nextBtn
-        .evaluate((el) => {
+        .evaluate((el: Element) => {
           const a = el as HTMLElement;
           const aria = a.getAttribute("aria-disabled");
           const cls = a.className || "";

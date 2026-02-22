@@ -38,5 +38,11 @@
     "baseUrl": "https://preprod01.laerdalonline.cn/admin",
     "subdomain": "preprod01-laerdalonline-cn",
     "orgId": "TBD"
+  },
+  "devsamurai": {
+    "env": "dev",
+    "baseUrl": "https://dev-samurai.laerdalblr.in/admin",
+    "subdomain": "dev-samurai",
+    "orgId": "TBD"
   }
 }
