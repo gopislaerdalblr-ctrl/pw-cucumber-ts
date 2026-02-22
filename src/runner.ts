@@ -10,9 +10,9 @@ import fs from "node:fs";
  */
 const RUN_CONFIG = {
   // Change these defaults whenever you want
-  instance: "qa-samurai", // instance key from src/config/instances.json
+  instance: "maurya", // instance key from src/config/instances.json
   //tags: "@test or @regression",
-  tags: "@sam",
+  tags: "@merge",
   parallel: 4,
 
   // NOTE:
@@ -191,6 +191,10 @@ async function runOnceForBrowser(browser: string): Promise<number> {
     "--parallel",
     String(parallel),
   ];
+
+  if (String(process.env.RETRY_FAILED_ONCE || "") === "1") {
+    args.push("--retry", "1");
+  }
 
   if (DRY_RUN) {
     args.push("--dry-run");

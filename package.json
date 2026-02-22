@@ -3,12 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "commonjs",
   "engines": {
     "node": ">=20 <25",
     "npm": ">=10"
   },
   "scripts": {
     "test": "ts-node src/runner.ts",
+    "test:heal": "cross-env SELF_HEAL=1 RETRY_FAILED_ONCE=1 ts-node src/runner.ts",
     "report": "ts-node src/report/generate-report.ts && ts-node src/report/rotate-reports.ts",
     "setup": "npm install && npx playwright install",
     "setup:clean": "npm ci && npx playwright install --with-deps",
@@ -17,7 +19,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "devDependencies": {
     "@cucumber/cucumber": "^12.6.0",
     "@playwright/test": "^1.58.0",
@@ -26,6 +27,7 @@
     "cross-env": "^10.1.0",
     "cucumber-html-reporter": "^7.2.0",
     "dotenv": "^17.2.3",
+    "healwright": "^1.3.0",
     "moment": "^2.30.1",
     "playwright": "^1.58.0",
     "rimraf": "^6.1.2",
