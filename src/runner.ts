@@ -12,7 +12,7 @@ const RUN_CONFIG = {
   // Change these defaults whenever you want
   instance: "maurya", // instance key from src/config/instances.json
   //tags: "@test or @regression",
-  tags: "@merge",
+  tags: "@samurai",
   parallel: 4,
 
   // NOTE:

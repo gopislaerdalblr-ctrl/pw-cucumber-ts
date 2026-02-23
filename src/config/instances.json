@@ -13,7 +13,8 @@
     "env": "qa",
     "baseUrl": "https://qa-samurai-llp.laerdalblr.in/admin",
     "subdomain": "qa-samurai-llp",
-    "orgId": "20000712"
+    "orgId": "20000712",
+    "orgId2": "20000713"
   },
   "preprodrqi1stop": {
     "env": "preprod",
