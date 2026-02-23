@@ -78,9 +78,7 @@ export async function clickIfPresent(
   return false;
 }
 
-/**
- * ✅ FINAL FIX (NO MISCLICK POSSIBLE):
- * - Open dropdown (already done in step)
+/*
  * - Find the Logout href using your selectors (NOT by clicking)
  * - Navigate to href directly (page.goto)
  */
@@ -139,7 +137,7 @@ async function navigateToLogoutFromDropdown(world: any): Promise<void> {
           }
         }
 
-        // ✅ Navigate directly — cannot click Switch Org by mistake
+        // Navigate directly — cannot click Switch Org by mistake
         await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
 
         // Optional extra settle
