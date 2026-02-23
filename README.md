@@ -77,19 +77,28 @@ A high-level overview of the framework architecture:
 
 ```text
 pw-cucumber-ts/
+├── .vscode/                   # VS Code settings
+│   └── settings.json
 ├── src/
+│   ├── api/                   # 👈 API Request Wrappers & Endpoints
+│   │   ├── requestManager.ts
+│   │   └── endPoints.ts
+│   ├── pages/                 # Page Object Model (UI)
+│   │   └── loginPage.ts
 │   ├── test/
-│   │   ├── features/       # Gherkin feature files (.feature)
-│   │   ├── steps/          # Step definitions (.ts)
-│   │   └── hooks/          # Hooks (setup/teardown, screenshots)
-│   ├── pages/              # Page Object Model (POM) classes
-│   └── utils/              # Helper functions (logger, env reader)
-├── test-results/           # Screenshots & traces (generated on run)
-├── reports/                # HTML/JSON execution reports
-├── cucumber.js             # Cucumber configuration
-├── playwright.config.ts    # Playwright browser config
-├── tsconfig.json           # TypeScript configuration
-└── package.json            # Scripts and dependencies
+│   │   ├── features/          # Feature Files
+│   │   │   ├── ui/
+│   │   │   └── api/
+│   │   └── steps/             # Step Definitions
+│   │       ├── ui/
+│   │       └── api/
+│   ├── utils/                 # Utilities (Logger, Env)
+│   └── runner.ts              # 👈 Custom Test Runner Entry Point
+├── cucumber.js                # Cucumber Configuration
+├── package.json               # Dependencies & Scripts
+├── tsconfig.json              # TypeScript Config
+├── playwright.config.ts       # Playwright Config
+└── README.md                  # Documentation
 ```
 
 ```
