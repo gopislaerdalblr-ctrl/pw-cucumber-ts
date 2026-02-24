@@ -1,6 +1,6 @@
 ﻿Feature: Admin Login
 
-  @smoke @test @sam
+  @smoke @test @sam @useremail
   Scenario: Super Admin login successfully
     Given Launch the application
     Then Login with admin credentials

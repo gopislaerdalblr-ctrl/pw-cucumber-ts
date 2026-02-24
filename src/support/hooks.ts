@@ -8,16 +8,57 @@
 } from "@cucumber/cucumber";
 import fs from "node:fs";
 import path from "node:path";
-import type { ConsoleMessage, Request, Response } from "playwright";
+import {
+  chromium,
+  firefox,
+  webkit,
+  Browser,
+  BrowserContext,
+  Page,
+  type ConsoleMessage,
+  type Request,
+  type Response,
+} from "playwright";
 import {
   loadInstance,
   loadCourseConfig,
   loadSecretsForInstance,
 } from "../config/runtime";
-import { launchPlaywright } from "./playwright-manager";
 import { World } from "./world";
 
+// --- Constants & Type Definitions ---
+
+const FIXED_VIEWPORT = { width: 1920, height: 1080 };
+const ALLOWED_BROWSER_TYPES = new Set(["chromium", "firefox", "webkit"]);
+
+const BROWSER_LAUNCHERS = {
+  chromium: (headless: boolean) =>
+    chromium.launch({
+      headless,
+      args: ["--start-maximized"],
+    }),
+  firefox: (headless: boolean) => firefox.launch({ headless }),
+  webkit: (headless: boolean) => webkit.launch({ headless }),
+} as const;
+
+type SecretsInstanceKey = Parameters<typeof loadSecretsForInstance>[0];
+type SecretsEnv = Parameters<typeof loadSecretsForInstance>[1];
+
+type NetEntry = {
+  type: "request" | "response" | "failed";
+  ts: string;
+  method?: string;
+  url: string;
+  status?: number;
+  statusText?: string;
+  resourceType?: string;
+  errorText?: string;
+  timingMs?: number;
+};
+
 setDefaultTimeout(120_000);
+
+// --- Helper Functions ---
 
 function ensureDir(p: string) {
   fs.mkdirSync(p, { recursive: true });
@@ -67,18 +108,6 @@ function safeFilePart(s: string) {
   return s.replace(/[^a-z0-9-_]/gi, "_").slice(0, 140);
 }
 
-type NetEntry = {
-  type: "request" | "response" | "failed";
-  ts: string;
-  method?: string;
-  url: string;
-  status?: number;
-  statusText?: string;
-  resourceType?: string;
-  errorText?: string;
-  timingMs?: number;
-};
-
 function toFileUrl(p: string) {
   return "file:///" + p.replace(/\\/g, "/");
 }
@@ -97,16 +126,20 @@ function tryCopyFile(src: string, dest: string) {
   }
 }
 
-// normalize INSTANCE input once, same everywhere
 function getInstanceKey(): string {
   return String(process.env.INSTANCE || "maurya")
     .trim()
     .toLowerCase();
 }
 
-/**
- * ✅ Capture screenshot at the exact failed step moment
- */
+function getViewportOptionsForBrowser(browserType: string) {
+  return browserType === "chromium"
+    ? { viewport: null }
+    : { viewport: FIXED_VIEWPORT };
+}
+
+// --- Hooks ---
+
 BeforeStep(function (this: World, { pickleStep }) {
   (this as any).lastStepText = pickleStep?.text || "";
 });
@@ -145,48 +178,75 @@ Before(async function (this: World, scenario) {
   (this as any).pickle = scenario.pickle;
   (this as any)._failedStepScreenshotCaptured = false;
 
-  // ✅ SINGLE source of truth for instance
   const instanceKey = getInstanceKey();
-
-  // ✅ Load instance config once
   const cfg = loadInstance(instanceKey);
   this.instance = cfg;
 
-  // ✅ Load secrets based on instance (qa-samurai.json / qaSamurai.json etc)
-  // NOTE: some projects type these params narrowly; cast only at the boundary to avoid TS EnvName complaints.
-  const secrets = loadSecretsForInstance(instanceKey as any, cfg.env as any);
+  const secrets = loadSecretsForInstance(
+    instanceKey as SecretsInstanceKey,
+    cfg.env as SecretsEnv,
+  );
 
   const course = loadCourseConfig();
+  // ✅ Save course config to World so After hook can access it
+  (this as any).courseConfig = course;
 
   this.adminEmail = secrets.adminEmail;
   this.adminPassword = secrets.adminPassword;
 
-  const pw = await launchPlaywright();
-  this.browser = pw.browser;
-  this.context = pw.context;
-  this.page = pw.page;
+  // --- BROWSER LAUNCH LOGIC ---
+  const browserEnvValue = process.env.BROWSER;
+  const browserType = browserEnvValue
+    ? browserEnvValue.toLowerCase()
+    : "chromium";
+  const headless = process.env.HEADLESS === "true";
 
-  // Console logs
+  if (!ALLOWED_BROWSER_TYPES.has(browserType)) {
+    throw new Error(
+      `Unsupported browser type "${browserEnvValue}". Allowed values are: chromium, firefox, webkit.`,
+    );
+  }
+
+  const launchBrowser =
+    BROWSER_LAUNCHERS[browserType as keyof typeof BROWSER_LAUNCHERS];
+
+  const browser: Browser = await launchBrowser(headless);
+  const contextOptions = getViewportOptionsForBrowser(browserType);
+
+  // ✅ ENABLE VIDEO RECORDING
+  const context: BrowserContext = await browser.newContext({
+    ...contextOptions,
+    recordVideo: {
+      dir: path.resolve("reports/_tmp/videos"), // Temporary storage
+      size: { width: 1280, height: 720 },
+    },
+  });
+
+  const page: Page = await context.newPage();
+
+  this.browser = browser;
+  this.context = context;
+  this.page = page;
+
+  // Console/Network Logging Setup
   this.consoleLogs = [];
   this.page.on("console", (msg: ConsoleMessage) => {
     this.consoleLogs.push(`[console] ${msg.type()} ${msg.text()}`);
   });
 
-  // Page errors
   (this as any).pageErrors = [];
   this.page.on("pageerror", (err: Error) => {
     (this as any).pageErrors.push(`[pageerror] ${err?.message || String(err)}`);
   });
 
-  // Network logs
   (this as any).netLogs = [] as NetEntry[];
   (this as any).reqStart = new Map<string, number>();
+
   const nowIso = () => new Date().toISOString();
 
   this.page.on("request", (req: Request) => {
     const id = req.url() + "::" + req.method() + "::" + req.resourceType();
     (this as any).reqStart.set(id, Date.now());
-
     (this as any).netLogs.push({
       type: "request",
       ts: nowIso(),
@@ -201,7 +261,6 @@ Before(async function (this: World, scenario) {
     const id = req.url() + "::" + req.method() + "::" + req.resourceType();
     const start = (this as any).reqStart.get(id);
     const timingMs = typeof start === "number" ? Date.now() - start : undefined;
-
     (this as any).netLogs.push({
       type: "response",
       ts: nowIso(),
@@ -235,7 +294,9 @@ Before(async function (this: World, scenario) {
     courseName: course.courseName,
     sourceId: (this as any).sourceId ?? "not-captured-yet",
     generatedAt: new Date().toISOString(),
-    browser: process.env.BROWSER || "chromium",
+    browser: browserType,
+    userSpecifiedBrowser:
+      typeof process.env.BROWSER === "string" ? process.env.BROWSER : null,
   });
 
   await this.attach(`Scenario: ${scenario.pickle.name}`, "text/plain");
@@ -244,25 +305,19 @@ Before(async function (this: World, scenario) {
 After(async function (this: World, scenario) {
   const scenarioName = scenario.pickle.name;
 
-  // ✅ Guard: if Before failed, page/context/browser may be undefined
-  const video = this.page?.video ? this.page.video() : null;
-
-  // Screenshot on failure (only if page exists)
+  // 1. Capture Screenshot on Failure (Must happen before close)
   if (scenario.result?.status === Status.FAILED && this.page) {
     const alreadyCaptured = Boolean(
       (this as any)._failedStepScreenshotCaptured,
     );
-
     if (!alreadyCaptured) {
       const tmpShotsDir = path.resolve("reports/_tmp/screenshots");
       ensureDir(tmpShotsDir);
-
       const safeName = safeFilePart(scenarioName);
       const fileName = `${new Date()
         .toISOString()
         .replace(/[:.]/g, "-")}_${safeName}.png`;
       const fullPath = path.join(tmpShotsDir, fileName);
-
       await this.page.screenshot({ path: fullPath, fullPage: true });
       const buf = fs.readFileSync(fullPath);
       await this.attach(buf, "image/png");
@@ -270,7 +325,106 @@ After(async function (this: World, scenario) {
     }
   }
 
-  // Write logs (safe even if page was never created)
+  // =========================================================================
+  // ✅ METADATA EXTRACTION
+  // =========================================================================
+  const currentInstance = (this as any).instance || {};
+  const courseConfig = (this as any).courseConfig || {};
+
+  // A. Robust Org ID
+  let activeOrgId = currentInstance.orgId || "unknown";
+
+  if (this.page) {
+    try {
+      const url = this.page.url();
+      const match = url.match(/\/manage_organization\/(\d+)/);
+      if (match && match[1]) {
+        activeOrgId = match[1];
+      } else {
+        const netLogs: NetEntry[] = (this as any).netLogs || [];
+        const lastOrgVisit = netLogs
+          .reverse()
+          .find(
+            (l) =>
+              l.url.includes("/manage_organization/") &&
+              !l.url.endsWith("/manage_organization/"),
+          );
+
+        if (lastOrgVisit) {
+          const histMatch = lastOrgVisit.url.match(
+            /\/manage_organization\/(\d+)/,
+          );
+          if (histMatch && histMatch[1]) {
+            activeOrgId = histMatch[1];
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // B. Mapped Courses
+  const foundCourses = new Set<string>();
+  try {
+    const steps = scenario.pickle.steps || [];
+    steps.forEach((step) => {
+      const text = step.text || "";
+      const matches = text.match(/["']([^"']+)["']/g);
+      if (matches) {
+        matches.forEach((m) => {
+          const key = m.replace(/["']/g, "");
+          if (courseConfig[key]) {
+            foundCourses.add(courseConfig[key]);
+          } else if (Object.values(courseConfig).includes(key)) {
+            foundCourses.add(key);
+          }
+        });
+      }
+    });
+  } catch {
+    // ignore
+  }
+
+  const coursesList = foundCourses.size
+    ? Array.from(foundCourses)
+        .map((c) => `• ${c}`)
+        .join("\n" + " ".repeat(18)) // Indent items
+    : "• (No mapped courses found)";
+
+  const instanceKey = getInstanceKey();
+
+  // ✅ PRETTIFIED METADATA BLOCK
+  const testMetadata = `
+╔════════════════════════════════════════════════════════════╗
+║             🔍  TEST EXECUTION CONTEXT                     ║
+╠════════════════════════════════════════════════════════════╣
+║ 🌍 Environment    : ${(currentInstance.env || "unknown").toUpperCase().padEnd(30)} ║
+║ 🔑 Instance Key   : ${instanceKey.padEnd(30)} ║
+║ 🖥️  Browser        : ${(process.env.BROWSER || "chromium").padEnd(30)} ║
+║ 🏢 Active Org ID  : ${activeOrgId.padEnd(30)} ║
+║ 🔗 Base URL       : ${currentInstance.baseUrl || "unknown"}
+╠════════════════════════════════════════════════════════════╣
+║ 📚 Used Courses   :
+                ${coursesList}
+╚════════════════════════════════════════════════════════════╝
+Timestamp: ${new Date().toISOString()}
+`.trim();
+
+  await this.attach(testMetadata, "text/plain");
+
+  // =========================================================================
+  // ✅ VIDEO & LOGS SAVING
+  // =========================================================================
+
+  // 1. Get Video Object Reference (BEFORE closing context)
+  const video = this.page?.video ? this.page.video() : null;
+  let videoPathPromise: Promise<string> | null = null;
+  if (video) {
+    videoPathPromise = video.path();
+  }
+
+  // 2. Generate Logs (Safe while page is closing)
   const meta = readRunMeta();
   const runName = meta?.generatedAt
     ? formatRunNameFromIso(meta.generatedAt)
@@ -310,17 +464,11 @@ After(async function (this: World, scenario) {
         );
       } else if (e.type === "response") {
         lines.push(
-          `[${e.ts}] [RES] ${e.method} ${e.url} -> ${e.status} ${
-            e.statusText || ""
-          } (${e.resourceType || ""}) ${
-            typeof e.timingMs === "number" ? `(${e.timingMs}ms)` : ""
-          }`,
+          `[${e.ts}] [RES] ${e.method} ${e.url} -> ${e.status} ${e.statusText || ""} (${e.resourceType || ""}) ${typeof e.timingMs === "number" ? `(${e.timingMs}ms)` : ""}`,
         );
       } else {
         lines.push(
-          `[${e.ts}] [FAIL] ${e.method} ${e.url} (${e.resourceType || ""}) :: ${
-            e.errorText || ""
-          }`,
+          `[${e.ts}] [FAIL] ${e.method} ${e.url} (${e.resourceType || ""}) :: ${e.errorText || ""}`,
         );
       }
     }
@@ -330,113 +478,67 @@ After(async function (this: World, scenario) {
   writeTextFile(netFileTmp, netText);
   writeTextFile(netJsonFileTmp, JSON.stringify(netLogs, null, 2));
 
-  const historyRunDir = path.resolve("reports/_history", runName);
-  const artifactsDir = path.join(historyRunDir, "artifacts");
-
-  if (fs.existsSync(historyRunDir)) {
-    tryCopyFile(
-      consoleFileTmp,
-      path.join(artifactsDir, path.basename(consoleFileTmp)),
-    );
-    tryCopyFile(
-      pageErrFileTmp,
-      path.join(artifactsDir, path.basename(pageErrFileTmp)),
-    );
-    tryCopyFile(netFileTmp, path.join(artifactsDir, path.basename(netFileTmp)));
-    tryCopyFile(
-      netJsonFileTmp,
-      path.join(artifactsDir, path.basename(netJsonFileTmp)),
-    );
-  }
-
-  const summary: string[] = [];
-  summary.push("✅ Logs saved as files (not embedded) to keep report small:");
-  summary.push(`Run: ${runName}`);
-  summary.push("");
-  summary.push("TMP Paths (always available):");
-  summary.push(`- Console   : ${consoleFileTmp}`);
-  summary.push(`- PageErrors: ${pageErrFileTmp}`);
-  summary.push(`- Network   : ${netFileTmp}`);
-  summary.push(`- NetworkJS : ${netJsonFileTmp}`);
-  summary.push("");
-  summary.push("Open directly (local):");
-  summary.push(`- Console   : ${toFileUrl(consoleFileTmp)}`);
-  summary.push(`- PageErrors: ${toFileUrl(pageErrFileTmp)}`);
-  summary.push(`- Network   : ${toFileUrl(netFileTmp)}`);
-  summary.push(`- NetworkJS : ${toFileUrl(netJsonFileTmp)}`);
-  if (fs.existsSync(historyRunDir)) {
-    summary.push("");
-    summary.push("Also copied into History (inside same run folder):");
-    summary.push(`- ${artifactsDir}`);
-  } else {
-    summary.push("");
-    summary.push(
-      "Note: History folder may be created after execution when report is generated. Logs are safely stored in reports/_tmp/logs now.",
-    );
-  }
-  await this.attach(summary.join("\n"), "text/plain");
-
-  // ✅ Healwright attachments should NOT depend on video existing
-  if (this.heal?.enabled) {
-    await this.attach(`Healwright enabled: ${this.heal.enabled}`, "text/plain");
-  }
-  if (this.heal?.used) {
-    const msg =
-      `Failed scenario had a selector/locator issue, it was healed with Healwright, ` +
-      `the scenario was retried once (if retry enabled), and then it passed (or continued).`;
-    await this.attach(msg, "text/plain");
-
-    if (Array.isArray(this.heal.messages) && this.heal.messages.length) {
-      await this.attach(this.heal.messages.join("\n"), "text/plain");
-    }
-  }
-
-  // wait a bit so video isn't cut
-  await this.page?.waitForTimeout(3000).catch(() => {});
-
-  // close safely
+  // 3. CLOSE BROWSER CONTEXT (Vital for saving Video)
   await this.page?.close().catch(() => {});
   await this.context?.close().catch(() => {});
   await this.browser?.close().catch(() => {});
 
-  // attach video (only if available)
-  if (video) {
+  // 4. PROCESS VIDEO (Now that context is closed, file is fully written)
+  if (video && videoPathPromise) {
     try {
-      const originalPath = await video.path();
-      const finalOriginalPath =
-        typeof originalPath === "string" ? originalPath : await video.path();
-
-      for (let i = 0; i < 30; i++) {
-        if (fs.existsSync(finalOriginalPath)) break;
-        await new Promise((r) => setTimeout(r, 200));
-      }
-
-      if (fs.existsSync(finalOriginalPath)) {
-        const meta2 = readRunMeta();
-        const runName2 = meta2?.generatedAt
-          ? formatRunNameFromIso(meta2.generatedAt)
-          : formatRunNameFromIso(new Date().toISOString());
-
+      const originalPath = await videoPathPromise;
+      if (fs.existsSync(originalPath)) {
         const videosDir = path.resolve("reports/_tmp/videos");
         ensureDir(videosDir);
-
-        const newFileName = `${runName2}__${safeFilePart(scenarioName)}.webm`;
+        const newFileName = `${runName}__${safeFilePart(scenarioName)}.webm`;
         const newPath = path.join(videosDir, newFileName);
 
         try {
           if (fs.existsSync(newPath)) fs.rmSync(newPath, { force: true });
-        } catch {
-          // ignore
+          fs.renameSync(originalPath, newPath);
+        } catch (e) {
+          fs.copyFileSync(originalPath, newPath);
+          fs.unlinkSync(originalPath);
         }
-
-        fs.renameSync(finalOriginalPath, newPath);
-
         const videoBuf = fs.readFileSync(newPath);
         await this.attach(videoBuf, "video/webm");
-        await this.attach(`Video: ${newFileName}`, "text/plain");
+        // Prettified Video Label
+        await this.attach(`🎥 Video: ${newFileName}`, "text/plain");
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      await this.attach(
+        `⚠️ Video processing failed: ${(e as Error).message}`,
+        "text/plain",
+      );
+    }
+  }
+
+  // 5. Prettified Summary Text Attachment
+  const summary: string[] = [];
+  summary.push("📋 LOG FILES (Available locally)");
+  summary.push("────────────────────────────────────────────────");
+  summary.push(`📂 Run ID: ${runName}`);
+  summary.push("");
+  summary.push("🔗 Open Local Logs:");
+  summary.push(`  • Console    : ${toFileUrl(consoleFileTmp)}`);
+  summary.push(`  • PageErrors : ${toFileUrl(pageErrFileTmp)}`);
+  summary.push(`  • Network    : ${toFileUrl(netFileTmp)}`);
+  summary.push(`  • NetworkJS  : ${toFileUrl(netJsonFileTmp)}`);
+  summary.push("");
+  summary.push("📝 Local Paths:");
+  summary.push(`  • ${consoleFileTmp}`);
+  summary.push("────────────────────────────────────────────────");
+
+  await this.attach(summary.join("\n"), "text/plain");
+
+  if (this.heal?.enabled) {
+    await this.attach(`Healwright enabled: ${this.heal.enabled}`, "text/plain");
+  }
+  if (this.heal?.used) {
+    const msg = `Failed scenario had a selector/locator issue, it was healed with Healwright.`;
+    await this.attach(msg, "text/plain");
+    if (Array.isArray(this.heal.messages) && this.heal.messages.length) {
+      await this.attach(this.heal.messages.join("\n"), "text/plain");
     }
   }
 });
