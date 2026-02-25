@@ -228,11 +228,23 @@ Before(async function (this: World, scenario) {
   this.context = context;
   this.page = page;
 
-  // Console/Network Logging Setup
+  // -------------------------------------------------------------------------
+  // ✅ SMART CONSOLE LOGGING (Truncate huge logs)
+  // -------------------------------------------------------------------------
   this.consoleLogs = [];
   this.page.on("console", (msg: ConsoleMessage) => {
-    this.consoleLogs.push(`[console] ${msg.type()} ${msg.text()}`);
+    const text = msg.text();
+    // Truncate excessively long logs (e.g., >1000 chars) to prevent massive reports
+    const limit = 1000;
+    const cleanText =
+      text.length > limit
+        ? text.substring(0, limit) +
+          ` ... [TRUNCATED (${text.length - limit} chars)]`
+        : text;
+
+    this.consoleLogs.push(`[console] ${msg.type()} ${cleanText}`);
   });
+  // -------------------------------------------------------------------------
 
   (this as any).pageErrors = [];
   this.page.on("pageerror", (err: Error) => {
@@ -323,10 +335,59 @@ After(async function (this: World, scenario) {
       await this.attach(buf, "image/png");
       await this.attach(`URL: ${this.page.url()}`, "text/plain");
     }
+
+    // =========================================================================
+    // ✅ GLOBAL UI ERROR CAPTURE (Auto-detect 502, 404, Alerts)
+    // =========================================================================
+    try {
+      const detectedErrors = await this.page.evaluate(() => {
+        const errors: string[] = [];
+
+        // 1. Check Headers (H1) for common HTTP error codes/text
+        const h1s = document.querySelectorAll("h1");
+        h1s.forEach((h) => {
+          const txt = h.innerText || "";
+          if (/502|500|404|403|Bad Gateway|Internal Server Error/i.test(txt)) {
+            errors.push(`Header Error: ${txt}`);
+          }
+        });
+
+        // 2. Check for UI Toasts / Alerts / Error Banners
+        const alerts = document.querySelectorAll(
+          '.toast-message, .alert, div[role="alert"], .error-banner',
+        );
+        alerts.forEach((el) => {
+          // Only capture if text is reasonably short (avoid capturing full body)
+          const txt = (el as HTMLElement).innerText || "";
+          if (txt.length > 0 && txt.length < 300) {
+            errors.push(`UI Alert: ${txt}`);
+          }
+        });
+
+        // 3. Fallback: Check body text for critical specific phrases
+        const bodyText = document.body.innerText || "";
+        if (bodyText.includes("502 Bad Gateway"))
+          errors.push("Page contains: 502 Bad Gateway");
+        if (bodyText.includes("404 Not Found"))
+          errors.push("Page contains: 404 Not Found");
+
+        return errors;
+      });
+
+      if (detectedErrors.length > 0) {
+        const uniqueErrors = Array.from(new Set(detectedErrors)); // Remove duplicates
+        const errorMsg = `🚨 UI ERROR DETECTED ON FAILURE:\n${uniqueErrors.join("\n")}`;
+        await this.attach(errorMsg, "text/plain");
+        console.error(`\n[HOOKS] ${errorMsg}\n`); // Also print to local terminal
+      }
+    } catch (err) {
+      // Ignore scraper errors (don't fail the test because scraper failed)
+    }
+    // =========================================================================
   }
 
   // =========================================================================
-  // ✅ METADATA EXTRACTION
+  // ✅ METADATA EXTRACTION (Robust OrgID & Course Logic)
   // =========================================================================
   const currentInstance = (this as any).instance || {};
   const courseConfig = (this as any).courseConfig || {};
@@ -349,7 +410,6 @@ After(async function (this: World, scenario) {
               l.url.includes("/manage_organization/") &&
               !l.url.endsWith("/manage_organization/"),
           );
-
         if (lastOrgVisit) {
           const histMatch = lastOrgVisit.url.match(
             /\/manage_organization\/(\d+)/,
@@ -391,7 +451,6 @@ After(async function (this: World, scenario) {
         .map((c) => `• ${c}`)
         .join("\n" + " ".repeat(18)) // Indent items
     : "• (No mapped courses found)";
-
   const instanceKey = getInstanceKey();
 
   // ✅ PRETTIFIED METADATA BLOCK
@@ -410,7 +469,6 @@ After(async function (this: World, scenario) {
 ╚════════════════════════════════════════════════════════════╝
 Timestamp: ${new Date().toISOString()}
 `.trim();
-
   await this.attach(testMetadata, "text/plain");
 
   // =========================================================================
@@ -432,7 +490,6 @@ Timestamp: ${new Date().toISOString()}
 
   const tmpLogsDir = path.resolve("reports/_tmp/logs");
   ensureDir(tmpLogsDir);
-
   const safeScenario = safeFilePart(scenarioName);
   const baseFile = `${runName}__${safeScenario}`;
 
@@ -451,7 +508,6 @@ Timestamp: ${new Date().toISOString()}
     ? pageErrors.join("\n")
     : "No page errors captured.";
   writeTextFile(pageErrFileTmp, pageErrorsText);
-
   const netLogs: NetEntry[] = (this as any).netLogs || [];
   let netText = "No network logs captured.";
   if (netLogs.length) {

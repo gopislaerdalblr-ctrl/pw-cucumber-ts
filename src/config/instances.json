@@ -20,7 +20,8 @@
     "env": "preprod",
     "baseUrl": "https://preprod-rqi1stop.laerdalblr.in/admin",
     "subdomain": "preprod-rqi1stop",
-    "orgId": "110714"
+    "orgId": "110714",
+    "orgId3": "116248"
   },
   "preprodeu": {
     "env": "preprod",
