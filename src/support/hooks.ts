@@ -25,6 +25,8 @@ import {
   loadSecretsForInstance,
 } from "../config/runtime";
 import { World } from "./world";
+// 👇 NEW IMPORT ADDED HERE
+import { pageFixture } from "./pageFixture";
 
 // --- Constants & Type Definitions ---
 
@@ -221,12 +223,15 @@ Before(async function (this: World, scenario) {
       size: { width: 1280, height: 720 },
     },
   });
-
   const page: Page = await context.newPage();
 
   this.browser = browser;
   this.context = context;
   this.page = page;
+
+  // 👇 NEW ASSIGNMENT ADDED HERE
+  // This makes the page available to your steps (like the accessibility test)
+  pageFixture.page = page;
 
   // -------------------------------------------------------------------------
   // ✅ SMART CONSOLE LOGGING (Truncate huge logs)
@@ -375,7 +380,8 @@ After(async function (this: World, scenario) {
       });
 
       if (detectedErrors.length > 0) {
-        const uniqueErrors = Array.from(new Set(detectedErrors)); // Remove duplicates
+        const uniqueErrors = Array.from(new Set(detectedErrors));
+        // Remove duplicates
         const errorMsg = `🚨 UI ERROR DETECTED ON FAILURE:\n${uniqueErrors.join("\n")}`;
         await this.attach(errorMsg, "text/plain");
         console.error(`\n[HOOKS] ${errorMsg}\n`); // Also print to local terminal
@@ -451,6 +457,7 @@ After(async function (this: World, scenario) {
         .map((c) => `• ${c}`)
         .join("\n" + " ".repeat(18)) // Indent items
     : "• (No mapped courses found)";
+
   const instanceKey = getInstanceKey();
 
   // ✅ PRETTIFIED METADATA BLOCK
@@ -490,6 +497,7 @@ Timestamp: ${new Date().toISOString()}
 
   const tmpLogsDir = path.resolve("reports/_tmp/logs");
   ensureDir(tmpLogsDir);
+
   const safeScenario = safeFilePart(scenarioName);
   const baseFile = `${runName}__${safeScenario}`;
 
@@ -508,6 +516,7 @@ Timestamp: ${new Date().toISOString()}
     ? pageErrors.join("\n")
     : "No page errors captured.";
   writeTextFile(pageErrFileTmp, pageErrorsText);
+
   const netLogs: NetEntry[] = (this as any).netLogs || [];
   let netText = "No network logs captured.";
   if (netLogs.length) {

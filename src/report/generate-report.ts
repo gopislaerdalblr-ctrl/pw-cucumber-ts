@@ -23,6 +23,21 @@ function readRunMeta(): any {
   return {};
 }
 
+// 👇 NEW HELPER FUNCTION
+function copyFolderSync(from: string, to: string) {
+  if (!fs.existsSync(from)) return;
+  if (!fs.existsSync(to)) fs.mkdirSync(to, { recursive: true });
+
+  fs.readdirSync(from).forEach((element) => {
+    const stat = fs.lstatSync(path.join(from, element));
+    if (stat.isFile()) {
+      fs.copyFileSync(path.join(from, element), path.join(to, element));
+    } else if (stat.isDirectory()) {
+      copyFolderSync(path.join(from, element), path.join(to, element));
+    }
+  });
+}
+
 async function zipFolder(srcDir: string, zipFile: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const output = fs.createWriteStream(zipFile);
@@ -49,11 +64,21 @@ async function generateReport() {
   const runFolder = path.resolve("reports/_history", stamp());
   fs.mkdirSync(runFolder, { recursive: true });
 
-  // copy cucumber.json + screenshots + run-meta.json into history bundle
+  // 1. Copy cucumber.json + screenshots + run-meta.json into history bundle
   fs.cpSync("reports/_tmp", path.join(runFolder, "_tmp"), { recursive: true });
+
+  // 2. 👇 COPY ACCESSIBILITY REPORTS (The new logic)
+  const accessSrc = path.resolve("reports/_tmp/accessibility");
+  const accessDest = path.join(runFolder, "accessibility");
+  if (fs.existsSync(accessSrc)) {
+    copyFolderSync(accessSrc, accessDest);
+    console.log(`📦 Accessibility reports archived to: ${accessDest}`);
+  }
 
   const htmlPath = path.join(runFolder, "report.html");
 
+  // 3. Generate the HTML Report
+  // (We use the object literal directly here to avoid the 'options' error)
   reporter.generate({
     theme: "bootstrap",
     jsonFile: tmpJson,
