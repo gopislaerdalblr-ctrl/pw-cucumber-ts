@@ -31,3 +31,25 @@ Scenario: Super Admin login successfully
     Then Check if course is available or add the course as "courseId" and "courseId1"
     Then Navigate to manage students page
     Then Import 1 students from file "students.csv"
+
+
+
+    @smoke @test @sam @accessibility
+  Scenario: Super Admin login successfully
+    Given Launch the application
+    Then Login with admin credentials
+    Then Admin should be logged in successfully
+    Then Select Super admin role
+    Then Navigate to Admin Dashboard
+    Then Navigate to Organizations listing page
+    Then the page should be accessible
+    Then Admin search org by id "orgId3"
+    Then Navigate to Organization details page
+    Then the page should be accessible
+    Then Navigate to products page
+    Then the page should be accessible
+    Then Check if course is available or add the course as "courseId" and "courseId1"
+    Then Navigate to manage students page
+    Then the page should be accessible
+    Then Import 1 students from file "students.csv"
+    

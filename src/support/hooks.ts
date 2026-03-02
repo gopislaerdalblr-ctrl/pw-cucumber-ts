@@ -1,4 +1,4 @@
-﻿import {
+import {
   Before,
   After,
   BeforeStep,
@@ -25,6 +25,8 @@ import {
   loadSecretsForInstance,
 } from "../config/runtime";
 import { World } from "./world";
+// 👇 NEW IMPORT ADDED HERE
+import { pageFixture } from "./pageFixture";
 
 // --- Constants & Type Definitions ---
 
@@ -254,6 +256,10 @@ Before(async function (this: World, scenario) {
   this.context = context;
   this.page = page;
 
+  // 👇 NEW ASSIGNMENT ADDED HERE
+  // This makes the page available to your steps (like the accessibility test)
+  pageFixture.page = page;
+
   // -------------------------------------------------------------------------
   // ✅ SMART CONSOLE LOGGING (Truncate huge logs)
   // -------------------------------------------------------------------------
@@ -395,6 +401,7 @@ After(async function (this: World, scenario) {
 
       if (detectedErrors.length > 0) {
         const uniqueErrors = Array.from(new Set(detectedErrors));
+        // Remove duplicates
         const errorMsg = `🚨 UI ERROR DETECTED ON FAILURE:\n${uniqueErrors.join("\n")}`;
         await this.attach(errorMsg, "text/plain");
         console.error(`\n[HOOKS] ${errorMsg}\n`);
