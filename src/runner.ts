@@ -10,9 +10,9 @@ import fs from "node:fs";
  */
 const RUN_CONFIG = {
   // Change these defaults whenever you want
-  instance: "preprodrqi1stop", // instance key from src/config/instances.json
+  instance: "maurya", // instance key from src/config/instances.json
   //tags: "@test or @regression",
-  tags: "@useremail",
+  tags: "@accessibility",
   parallel: 4,
 
   // NOTE:
